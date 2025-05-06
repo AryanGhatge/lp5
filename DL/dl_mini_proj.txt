@@ -1,0 +1,127 @@
+!pip install deepface opencv-python-headless pillow matplotlib
+
+
+import os
+import warnings
+import numpy as np
+import matplotlib.pyplot as plt
+from PIL import Image, ImageEnhance
+from google.colab import files
+from deepface import DeepFace
+
+
+# Suppress warnings
+warnings.filterwarnings("ignore")
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+
+def enhance_image_for_detection(image_path):
+    """Enhance the image to improve face detection and age estimation"""
+    img = Image.open(image_path)
+
+    # Convert to RGB if needed
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+
+    # Apply enhancements
+    img = ImageEnhance.Contrast(img).enhance(1.2)
+    img = ImageEnhance.Sharpness(img).enhance(1.5)
+    img = ImageEnhance.Brightness(img).enhance(1.05)
+
+    # Save enhanced image
+    enhanced_path = f"enhanced_{os.path.basename(image_path)}"
+    img.save(enhanced_path)
+
+    return enhanced_path
+
+
+def analyze_image(image_path):
+    """Analyze an image to detect age and gender"""
+    try:
+        # Display original image
+        img = Image.open(image_path)
+        plt.figure(figsize=(8, 8))
+        plt.imshow(np.array(img))
+        plt.axis('off')
+        plt.title("Input Image")
+        plt.show()
+
+        # Enhance image for better detection
+        enhanced_path = enhance_image_for_detection(image_path)
+
+        # Try multiple detector backends and use the first successful one
+        backends = ["retinaface", "mtcnn", "opencv"]
+        result = None
+
+        for backend in backends:
+            try:
+                result = DeepFace.analyze(
+                    img_path=enhanced_path,
+                    actions=['age', 'gender'],
+                    enforce_detection=True,
+                    detector_backend=backend
+                )[0]
+                break
+            except Exception:
+                continue
+
+        # Clean up enhanced image
+        if os.path.exists(enhanced_path):
+            os.remove(enhanced_path)
+
+        if result is None:
+            return {
+                "error": "Face analysis failed with all detection methods"
+            }
+
+        # Get age and correct it for younger faces
+        age = result["age"]
+        if age < 40:
+            age = age * 0.85  # Apply correction factor for younger faces
+
+        # Calculate age range
+        age_margin = 3
+        age_range = f"{max(0, int(age - age_margin))} - {int(age + age_margin)}"
+
+        # Get gender
+        if isinstance(result["gender"], dict):
+            gender = max(result["gender"], key=result["gender"].get)
+            gender_confidence = result["gender"][gender]
+        else:
+            gender = result["gender"]
+            gender_confidence = 100.0
+
+        return {
+            "age": int(age),
+            "age_range": age_range,
+            "gender": gender,
+            "gender_confidence": gender_confidence
+        }
+
+    except Exception as e:
+        return {
+            "error": f"Face analysis failed: {str(e)}"
+        }
+
+
+def print_results(results):
+    """Print results in the exact requested format"""
+    if "error" in results:
+        print(f"❌ Error: {results['error']}")
+        return
+    print("\n")
+    print(f"🧓 Estimated Age: {results['age']} years")
+    print(f"📏 Likely Age Range: {results['age_range']} years")
+    print(f"👤 Gender: {results['gender']}")
+    print(f"🎯 Gender Confidence: {results['gender_confidence']:.2f}%")
+
+
+# Google Colab file upload method
+print("Please upload an image with a clear face:")
+uploaded = files.upload()
+
+
+# Process the uploaded file
+for filename in uploaded.keys():
+    results = analyze_image(filename)
+    print_results(results)
